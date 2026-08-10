@@ -48,15 +48,14 @@ const parseJwtPayload = (token: string): any => {
 };
 
 /**
- * Direct Google OAuth 2.0 Implicit Popup as a fallback when GIS One-Tap/Prompt is suppressed.
+ * Direct Google OAuth 2.0 Implicit Popup.
  * Opens authentication directly on accounts.google.com with zero Supabase Hosted OAuth redirects.
+ * Communicates result via window.postMessage with safe fallback.
  */
-const openGoogleOAuthPopup = (clientId: string, hashedNonce: string): Promise<string> => {
-  return new Promise((resolve, reject) => {
+const openGoogleOAuthPopup = (clientId: string, hashedNonce: string): Promise<{ idToken?: string; cancelled?: boolean; error?: string }> => {
+  return new Promise((resolve) => {
     if (typeof window === 'undefined') {
-      const err = new Error('Pencere bileşeni bulunamadı.');
-      console.error('[DEBUG Google OAuth HATA]', err);
-      return reject(err);
+      return resolve({ error: 'Pencere bileşeni bulunamadı.' });
     }
 
     const redirectUri = window.location.origin;
@@ -75,113 +74,74 @@ const openGoogleOAuthPopup = (clientId: string, hashedNonce: string): Promise<st
     );
 
     if (!popup) {
-      const err = new Error('Açılır pencere (popup) engellendi. Lütfen tarayıcı izinlerinizi kontrol edin.');
-      console.error('[DEBUG Google OAuth Popup HATA]', err);
-      return reject(err);
+      return resolve({ error: 'Açılır pencere (popup) engellendi. Lütfen tarayıcı izinlerinizi kontrol edin.' });
     }
 
-    const checkPopupInterval = setInterval(() => {
+    let isResolved = false;
+    let timer: any = null;
+
+    const cleanup = () => {
+      if (isResolved) return;
+      isResolved = true;
+      if (timer) clearInterval(timer);
+      window.removeEventListener('message', handleMessage);
+    };
+
+    const handleMessage = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin) return;
+      if (event.data?.type === 'GOOGLE_OAUTH_SUCCESS' && event.data?.idToken) {
+        cleanup();
+        resolve({ idToken: event.data.idToken });
+      } else if (event.data?.type === 'GOOGLE_OAUTH_ERROR') {
+        cleanup();
+        resolve({ error: event.data.error || 'Google kimlik doğrulama hatası.' });
+      }
+    };
+
+    window.addEventListener('message', handleMessage);
+
+    timer = setInterval(() => {
+      if (isResolved) return;
+
       try {
         if (popup.closed) {
-          clearInterval(checkPopupInterval);
-          const err = new Error('Google giriş penceresi kapatıldı.');
-          reject(err);
+          cleanup();
+          resolve({ cancelled: true, error: 'Google giriş penceresi kapatıldı.' });
           return;
         }
 
-        const popupUrl = popup.location.href;
-        if (popupUrl && popupUrl.startsWith(redirectUri)) {
+        if (popup.location.origin === window.location.origin) {
           const hash = popup.location.hash;
-          popup.close();
-          clearInterval(checkPopupInterval);
-
-          const params = new URLSearchParams(hash.replace(/^#/, ''));
-          const idToken = params.get('id_token');
-
-          if (idToken) {
-            resolve(idToken);
-          } else {
-            const err = new Error('Google OAuth yanıtında id_token bulunamadı.');
-            reject(err);
+          if (hash && hash.includes('id_token=')) {
+            const params = new URLSearchParams(hash.replace(/^#/, ''));
+            const idToken = params.get('id_token');
+            try { popup.close(); } catch (e) {}
+            cleanup();
+            if (idToken) {
+              resolve({ idToken });
+            } else {
+              resolve({ error: 'Google OAuth yanıtında id_token bulunamadı.' });
+            }
           }
         }
       } catch (e) {
-        // Cross-origin access until popup redirects back to origin
+        // Expected cross-origin exception while popup is on accounts.google.com
       }
-    }, 200);
+    }, 250);
   });
 };
 
 /**
- * Directly triggers Google Identity Services (GIS) / Google OAuth flow to acquire a Google ID Token.
+ * Directly triggers Google OAuth popup flow to acquire a Google ID Token.
  */
-const acquireGoogleIdToken = (hashedNonce: string): Promise<string> => {
-  return new Promise((resolve, reject) => {
-    if (typeof window === 'undefined') {
-      const err = new Error('Pencere bileşeni bulunamadı.');
-      console.error('[DEBUG Google OAuth HATA]', err);
-      return reject(err);
-    }
+const acquireGoogleIdToken = async (hashedNonce: string): Promise<{ idToken?: string; cancelled?: boolean; error?: string }> => {
+  if (typeof window === 'undefined') {
+    return { error: 'Pencere bileşeni bulunamadı.' };
+  }
 
-    const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID || '43567125632-3p2uri5kgb5inrjrq0vslla78mpjk79v.apps.googleusercontent.com';
+  const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID || '43567125632-3p2uri5kgb5inrjrq0vslla78mpjk79v.apps.googleusercontent.com';
 
-    const handleCredentialResponse = (response: any) => {
-      const idToken = response?.credential;
-
-      if (idToken) {
-        resolve(idToken);
-      } else {
-        const err = new Error('Google kimlik doğrulamasından id_token alınamadı.');
-        reject(err);
-      }
-    };
-
-    const launchGis = () => {
-      try {
-        if (!window.google?.accounts?.id) {
-          throw new Error('Google Identity Services SDK bulunamadı.');
-        }
-
-        window.google.accounts.id.initialize({
-          client_id: clientId,
-          callback: handleCredentialResponse,
-          nonce: hashedNonce,
-          auto_select: false,
-          cancel_on_tap_outside: true,
-        });
-
-        window.google.accounts.id.prompt((notification: any) => {
-          if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
-            openGoogleOAuthPopup(clientId, hashedNonce).then(resolve).catch(reject);
-          }
-        });
-      } catch (err) {
-        openGoogleOAuthPopup(clientId, hashedNonce).then(resolve).catch(reject);
-      }
-    };
-
-    if (window.google?.accounts?.id) {
-      launchGis();
-      return;
-    }
-
-    const existingScript = document.getElementById('google-gsi-client');
-    if (existingScript) {
-      existingScript.addEventListener('load', launchGis, { once: true });
-    } else {
-      const script = document.createElement('script');
-      script.id = 'google-gsi-client';
-      script.src = 'https://accounts.google.com/gsi/client';
-      script.async = true;
-      script.defer = true;
-      script.onload = launchGis;
-      script.onerror = (e) => {
-        console.error('[DEBUG Google GIS] GIS Script yükleme hatası:', e);
-        openGoogleOAuthPopup(clientId, hashedNonce).then(resolve).catch(reject);
-      };
-      document.head.appendChild(script);
-    }
-  });
+  return await openGoogleOAuthPopup(clientId, hashedNonce);
 };
 
 export type UserRole = 'customer' | 'partner' | 'assistant' | 'admin' | 'super_admin';
@@ -199,7 +159,7 @@ export type AuthState = CustomerAuthState;
 export interface CustomerAuthContextType extends CustomerAuthState {
   signIn: (email: string, pass: string) => Promise<{ success: boolean; role?: UserRole; error?: string }>;
   signUp: (email: string, pass: string, role?: UserRole, metadata?: Record<string, any>) => Promise<{ success: boolean; user?: any; error?: string }>;
-  signInWithGoogle: () => Promise<{ success: boolean; user?: any; profile?: UserProfile; error?: string }>;
+  signInWithGoogle: () => Promise<{ success: boolean; user?: any; profile?: UserProfile; error?: string; cancelled?: boolean }>;
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<UserProfile | null>;
   hasRole: (allowedRoles: UserRole | UserRole[]) => boolean;
@@ -532,7 +492,6 @@ export const CustomerAuthProvider: React.FC<{ children: React.ReactNode }> = ({ 
     try {
       if (!isSupabaseConfigured || !supabaseCustomer) {
         const errorMsg = 'Supabase bağlantısı henüz yapılandırılmamış.';
-        console.error('[DEBUG Google Auth HATA]', errorMsg);
         setError(errorMsg);
         setLoading(false);
         return { success: false, error: errorMsg };
@@ -546,10 +505,15 @@ export const CustomerAuthProvider: React.FC<{ children: React.ReactNode }> = ({ 
       const hashedNonce = await sha256Hex(rawNonce);
 
       // 2. Directly acquire Google ID Token from Google with SHA-256 hashed nonce
-      const googleIdToken = await acquireGoogleIdToken(hashedNonce);
+      const tokenResult = await acquireGoogleIdToken(hashedNonce);
 
-      if (!googleIdToken) {
-        const msg = 'Google kimlik doğrulama tokenı alınamadı.';
+      if (tokenResult.cancelled) {
+        setLoading(false);
+        return { success: false, cancelled: true, error: tokenResult.error || 'Giriş penceresi kapatıldı.' };
+      }
+
+      if (tokenResult.error || !tokenResult.idToken) {
+        const msg = tokenResult.error || 'Google kimlik doğrulama tokenı alınamadı.';
         setError(msg);
         setLoading(false);
         return { success: false, error: msg };
@@ -558,7 +522,7 @@ export const CustomerAuthProvider: React.FC<{ children: React.ReactNode }> = ({ 
       // 3. Pass Google ID Token & rawNonce to Supabase Auth (signInWithIdToken)
       const { data, error: idTokenErr } = await supabaseCustomer.auth.signInWithIdToken({
         provider: 'google',
-        token: googleIdToken,
+        token: tokenResult.idToken,
         nonce: rawNonce,
       });
 
@@ -582,7 +546,6 @@ export const CustomerAuthProvider: React.FC<{ children: React.ReactNode }> = ({ 
       return { success: true };
     } catch (err: any) {
       const msg = err?.message || 'Google ile giriş yapılırken bir hata oluştu.';
-      console.error('[DEBUG Google Auth Flow İSTİSNA HATA]:', err);
       setError(msg);
       setLoading(false);
       return { success: false, error: msg };

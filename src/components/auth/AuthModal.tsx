@@ -60,21 +60,20 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setSuccessMsg(null);
     setSubmitting(true);
 
-    console.log('[DEBUG AuthModal] handleGoogleSignIn butonuna tıklandı...');
-
     try {
       const res = await signInWithGoogle();
       setSubmitting(false);
 
-      console.log('[DEBUG AuthModal] signInWithGoogle() yanıtı:', res);
+      if (res.cancelled) {
+        // User closed the popup window manually. Clean exit without error logs.
+        return;
+      }
 
       if (!res.success) {
-        console.error('[DEBUG AuthModal HATA] Google girişi başarısız:', res.error);
         setErrorMsg(res.error || 'Google ile giriş yapılırken bir hata oluştu.');
         return;
       }
 
-      console.log('[DEBUG AuthModal] Google girişi başarılı! Modal kapatılıyor...');
       setSuccessMsg('Giriş başarılı! Kaldığınız yerden devam ediliyor...');
       setTimeout(() => {
         onClose();
@@ -83,7 +82,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         }
       }, 500);
     } catch (err: any) {
-      console.error('[DEBUG AuthModal İSTİSNA HATA]:', err);
       setSubmitting(false);
       setErrorMsg(err?.message || 'Google ile giriş başarısız oldu.');
     }
