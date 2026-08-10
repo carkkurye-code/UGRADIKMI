@@ -19,9 +19,11 @@ if (typeof window !== 'undefined' && window.opener && (window.location.hash.incl
   } catch (e) {
     // Ignore postMessage notice
   }
-  try {
-    window.close();
-  } catch (e) {}
+  setTimeout(() => {
+    try {
+      window.close();
+    } catch (e) {}
+  }, 100);
 } else {
   createRoot(document.getElementById('root')!).render(<App />);
 }

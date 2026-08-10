@@ -78,13 +78,16 @@ const openGoogleOAuthPopup = (clientId: string, hashedNonce: string): Promise<{ 
     }
 
     let isResolved = false;
-    let timer: any = null;
+    let focusTimer: any = null;
+    let timeoutTimer: any = null;
 
     const cleanup = () => {
       if (isResolved) return;
       isResolved = true;
-      if (timer) clearInterval(timer);
+      if (focusTimer) clearTimeout(focusTimer);
+      if (timeoutTimer) clearTimeout(timeoutTimer);
       window.removeEventListener('message', handleMessage);
+      window.removeEventListener('focus', handleFocus);
     };
 
     const handleMessage = (event: MessageEvent) => {
@@ -98,36 +101,23 @@ const openGoogleOAuthPopup = (clientId: string, hashedNonce: string): Promise<{ 
       }
     };
 
-    window.addEventListener('message', handleMessage);
+    const handleFocus = () => {
+      if (focusTimer) clearTimeout(focusTimer);
+      focusTimer = setTimeout(() => {
+        if (isResolved) return;
+        cleanup();
+        resolve({ cancelled: true, error: 'Google giriş penceresi kapatıldı.' });
+      }, 600);
+    };
 
-    timer = setInterval(() => {
+    timeoutTimer = setTimeout(() => {
       if (isResolved) return;
+      cleanup();
+      resolve({ cancelled: true, error: 'Google giriş işlemi zaman aşımına uğradı.' });
+    }, 180000);
 
-      try {
-        if (popup.closed) {
-          cleanup();
-          resolve({ cancelled: true, error: 'Google giriş penceresi kapatıldı.' });
-          return;
-        }
-
-        if (popup.location.origin === window.location.origin) {
-          const hash = popup.location.hash;
-          if (hash && hash.includes('id_token=')) {
-            const params = new URLSearchParams(hash.replace(/^#/, ''));
-            const idToken = params.get('id_token');
-            try { popup.close(); } catch (e) {}
-            cleanup();
-            if (idToken) {
-              resolve({ idToken });
-            } else {
-              resolve({ error: 'Google OAuth yanıtında id_token bulunamadı.' });
-            }
-          }
-        }
-      } catch (e) {
-        // Expected cross-origin exception while popup is on accounts.google.com
-      }
-    }, 250);
+    window.addEventListener('message', handleMessage);
+    window.addEventListener('focus', handleFocus);
   });
 };
 
