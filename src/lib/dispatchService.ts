@@ -707,16 +707,23 @@ export class LiveDispatchService {
   /**
    * 4. Handle Assistant Reject ("Reddet") Action
    */
-  public static async rejectOffer(orderId: string, offerId: string, assistantId: string): Promise<{ success: boolean; message?: string }> {
+  public static async rejectOffer(orderId: string, offerId: string, assistantId: string, customClient?: any): Promise<{ success: boolean; message?: string }> {
     try {
       // 1. Mark offer as rejected in Supabase
-      if (isSupabaseConfigured && supabase) {
+      const client = customClient || supabase;
+      if (isSupabaseConfigured && client) {
         try {
-          if (isUUID(offerId)) {
-            await supabase
+          if (offerId && isUUID(offerId)) {
+            await client
               .from('dispatch_offers')
               .update({ status: 'rejected' })
               .eq('id', offerId);
+          } else if (orderId && isUUID(orderId)) {
+            await client
+              .from('dispatch_offers')
+              .update({ status: 'rejected' })
+              .or(`order_id.eq.${orderId},task_id.eq.${orderId}`)
+              .eq('assistant_id', assistantId);
           }
         } catch (dbErr) {
           console.warn('[LiveDispatch] Supabase offer rejection update error:', dbErr);

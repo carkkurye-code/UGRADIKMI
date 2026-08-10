@@ -87,6 +87,35 @@ export interface AssistantSubscription {
 
 const taskFieldsCache = new WeakMap<object, ResolvedTaskFields>();
 
+export function getOrderCategoryBadge(order: any): { label: string; className: string } {
+  const isStoreTask = Boolean(
+    order?.is_task ||
+    order?.source === 'tasks' ||
+    order?.service_type === 'asistan_siparis' ||
+    order?.service_type === 'magaza'
+  );
+
+  if (isStoreTask) {
+    return {
+      label: 'MAĞAZA',
+      className: 'bg-purple-50 text-[#7C3AED] border-purple-200'
+    };
+  }
+
+  const rawService = order?.service_type || order?.delivery_type;
+  if (rawService === 'gecerken' || rawService === 'gecerken_ugra') {
+    return {
+      label: 'GEÇERKEN UĞRA',
+      className: 'bg-blue-50 text-[#2563EB] border-blue-200'
+    };
+  }
+
+  return {
+    label: 'HEMEN UĞRA',
+    className: 'bg-emerald-50 text-[#10B981] border-emerald-200'
+  };
+}
+
 export function resolveTaskFields(item: any): ResolvedTaskFields {
   if (!item) {
     return {
@@ -732,7 +761,13 @@ export function AsistanPage() {
 
   // Filter Orders for specific tabs
   const pendingOrders = allOrders.filter((o) => {
-    if (rejectedOrderIds.has(o.id)) return false;
+    if (
+      rejectedOrderIds.has(o.id) ||
+      ((o as any).task_id && rejectedOrderIds.has((o as any).task_id)) ||
+      ((o as any).order_id && rejectedOrderIds.has((o as any).order_id))
+    ) {
+      return false;
+    }
     const isPendingStatus = ['pending', 'created', 'bekliyor', 'beklemede', 'hazirlaniyor', 'hazir'].includes(o.status);
     const isAssignedToMeOrOpen = !o.assistant_id || (currentAssistant && (o.assistant_id === currentAssistant.id || o.assistant_id === currentAssistant.user_id));
     return isPendingStatus && isAssignedToMeOrOpen;
@@ -1027,14 +1062,28 @@ export function AsistanPage() {
           const [ordersRes, tasksRes, dispatchOffersRes] = await Promise.all([
             activeClient.from('orders').select('*').order('created_at', { ascending: false }),
             activeClient.from('tasks').select('*').order('created_at', { ascending: false }),
-            activeClient.from('dispatch_offers').select('order_id, task_id').in('assistant_id', assistantUserIds).eq('status', 'rejected')
+            activeClient.from('dispatch_offers').select('id, order_id, task_id, status').in('assistant_id', assistantUserIds)
           ]);
 
+          const offerMap = new Map<string, string>();
           if (dispatchOffersRes?.data) {
-            const rejectedIds = dispatchOffersRes.data.map((item: any) => item.order_id || item.task_id).filter(Boolean);
-            setRejectedOrderIds(new Set(rejectedIds));
-          } else {
-            setRejectedOrderIds(new Set());
+            const rejectedIds = dispatchOffersRes.data
+              .filter((item: any) => item.status === 'rejected')
+              .flatMap((item: any) => [item.order_id, item.task_id])
+              .filter(Boolean);
+
+            setRejectedOrderIds((prev) => {
+              const next = new Set(prev);
+              rejectedIds.forEach((id: string) => next.add(id));
+              return next;
+            });
+
+            dispatchOffersRes.data.forEach((offer: any) => {
+              if (offer.id) {
+                if (offer.task_id) offerMap.set(offer.task_id, offer.id);
+                if (offer.order_id) offerMap.set(offer.order_id, offer.id);
+              }
+            });
           }
 
           let mappedOrders: any[] = [];
@@ -1092,7 +1141,6 @@ export function AsistanPage() {
                 delivery_code_verified: order.delivery_code_verified ?? false,
                 created_at: order.created_at,
 
-                task_id: order.id,
                 assistant_id: order.assistant_id || null,
                 assistant_name: order.assistant_name || null,
                 assistant_phone: order.assistant_phone || null,
@@ -1103,6 +1151,7 @@ export function AsistanPage() {
                 cancelled_at: order.cancelled_at || null,
                 service_type: order.service_type || 'hemen',
                 task_description: desc || undefined,
+                offer_id: offerMap.get(order.id) || null,
               };
             });
           }
@@ -1163,6 +1212,7 @@ export function AsistanPage() {
                 cancelled_at: task.cancelled_at || null,
                 service_type: task.service_type || 'asistan_siparis',
                 task_description: desc || 'Mağaza Ürün Siparişi',
+                offer_id: offerMap.get(task.id) || null,
               };
             });
           }
@@ -1364,9 +1414,14 @@ export function AsistanPage() {
     }
   }, [currentAssistant, fetchAssistantOrders, fetchAssistantSubscription]);
 
+  const fetchOrdersRef = useRef(fetchAssistantOrders);
+  useEffect(() => {
+    fetchOrdersRef.current = fetchAssistantOrders;
+  }, [fetchAssistantOrders]);
+
   // Subscribe to Realtime orders and tasks table updates
   useEffect(() => {
-    if (!currentAssistant) return;
+    if (!currentAssistant?.id) return;
 
     let ordersChannel: any = null;
     let tasksChannel: any = null;
@@ -1375,7 +1430,7 @@ export function AsistanPage() {
       ordersChannel = client
         .channel(`assistant-orders-${currentAssistant.id}`)
         .on('postgres_changes' as any, { event: '*', schema: 'public', table: 'orders' }, () => {
-          fetchAssistantOrders();
+          fetchOrdersRef.current();
         })
         .subscribe((status: string) => {
           if (status === 'SUBSCRIBED') {
@@ -1386,7 +1441,7 @@ export function AsistanPage() {
       tasksChannel = client
         .channel(`assistant-tasks-${currentAssistant.id}`)
         .on('postgres_changes' as any, { event: '*', schema: 'public', table: 'tasks' }, () => {
-          fetchAssistantOrders();
+          fetchOrdersRef.current();
         })
         .subscribe((status: string) => {
           if (status === 'SUBSCRIBED') {
@@ -1401,7 +1456,7 @@ export function AsistanPage() {
         if (tasksChannel) client.removeChannel(tasksChannel);
       }
     };
-  }, [currentAssistant, fetchAssistantOrders]);
+  }, [currentAssistant?.id]);
 
   // Rule 1 & 2: Asistan Giriş (Assistant Login)
   const handleAuthSubmit = async (e: React.FormEvent) => {
@@ -1950,42 +2005,82 @@ export function AsistanPage() {
     if (!currentAssistant) return;
     setActionLoading(orderId);
     try {
-      setRejectedOrderIds((prev) => new Set(prev).add(orderId));
+      setRejectedOrderIds((prev) => {
+        const next = new Set(prev);
+        next.add(orderId);
+        return next;
+      });
 
       const targetItem = allOrders.find(o => o.id === orderId || (o as any).task_id === orderId);
-      const isTask = Boolean((targetItem as any)?.is_task || (targetItem as any)?.source === 'tasks' || (targetItem as any)?.service_type === 'asistan_siparis');
+      const isTask = Boolean(
+        (targetItem as any)?.is_task ||
+        (targetItem as any)?.source === 'tasks' ||
+        (targetItem as any)?.service_type === 'asistan_siparis' ||
+        (targetItem as any)?.service_type === 'magaza'
+      );
 
       if (isSupabaseConfigured) {
         try {
           const activeClient = await getAuthenticatedClient();
-          const targetOfferId = offerId;
+          const targetOfferId = offerId || (targetItem as any)?.offer_id;
           const validId = orderId ? (isUUID(orderId) ? orderId : toUUID(orderId)) : null;
           const assistantUserIds = [currentAssistant.user_id, currentAssistant.id].filter(Boolean) as string[];
           const assistantIdToUse = currentAssistant.user_id || currentAssistant.id;
 
           let updated = false;
           if (targetOfferId && isUUID(targetOfferId)) {
-            const { data } = await activeClient.from('dispatch_offers').update({ status: 'rejected' }).eq('id', targetOfferId).select();
-            if (data && data.length > 0) updated = true;
+            const { data, error } = await activeClient
+              .from('dispatch_offers')
+              .update({ status: 'rejected' })
+              .eq('id', targetOfferId)
+              .select();
+            if (error) {
+              console.error('[AsistanPage] Reject offer update by offer_id error:', {
+                status: error.code,
+                message: error.message,
+                details: error.details,
+                hint: error.hint
+              });
+            } else if (data && data.length > 0) {
+              updated = true;
+            }
           }
 
           if (!updated && validId) {
             if (isTask) {
-              const { data } = await activeClient
+              const { data, error } = await activeClient
                 .from('dispatch_offers')
                 .update({ status: 'rejected' })
                 .eq('task_id', validId)
                 .in('assistant_id', assistantUserIds)
                 .select();
-              if (data && data.length > 0) updated = true;
+              if (error) {
+                console.error('[AsistanPage] Reject offer update by task_id error:', {
+                  status: error.code,
+                  message: error.message,
+                  details: error.details,
+                  hint: error.hint
+                });
+              } else if (data && data.length > 0) {
+                updated = true;
+              }
             } else {
-              const { data } = await activeClient
+              const { data, error } = await activeClient
                 .from('dispatch_offers')
                 .update({ status: 'rejected' })
                 .eq('order_id', validId)
                 .in('assistant_id', assistantUserIds)
                 .select();
-              if (data && data.length > 0) updated = true;
+              if (error) {
+                console.error('[AsistanPage] Reject offer update by order_id error:', {
+                  status: error.code,
+                  message: error.message,
+                  details: error.details,
+                  hint: error.hint
+                });
+              } else if (data && data.length > 0) {
+                updated = true;
+              }
             }
           }
 
@@ -2006,13 +2101,22 @@ export function AsistanPage() {
               // CRITICAL: DO NOT set order_id for store task!
             } else {
               rawOffer.order_id = validId;
-              rawOffer.task_id = validId;
             }
 
-            await supabase.from('dispatch_offers').insert(rawOffer);
+            const { error: insertErr } = await activeClient.from('dispatch_offers').insert(rawOffer);
+            if (insertErr) {
+              console.error('[AsistanPage] Fallback offer insert error:', {
+                status: insertErr.code,
+                message: insertErr.message,
+                details: insertErr.details,
+                hint: insertErr.hint
+              });
+            }
           }
-        } catch (dbErr) {
-          console.warn('[AsistanPage] Reject offer update notice:', dbErr);
+
+          await LiveDispatchService.rejectOffer(orderId, targetOfferId || '', assistantIdToUse, activeClient);
+        } catch (dbErr: any) {
+          console.error('[AsistanPage] Reject offer exception:', dbErr);
         }
       }
 
@@ -2205,13 +2309,14 @@ export function AsistanPage() {
                           {/* 1. Sipariş No & Service Badge Header */}
                           <div className="flex items-center justify-between border-b border-[#E5E7EB] pb-2.5">
                             <div className="flex items-center gap-2">
-                              <span className={`px-2.5 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider border ${
-                                r.service_type === 'gecerken'
-                                  ? 'bg-blue-50 text-[#2563EB] border-blue-200'
-                                  : 'bg-emerald-50 text-[#10B981] border-emerald-200'
-                              }`}>
-                                {r.service_type === 'gecerken' ? 'Geçerken UĞRA' : 'Hemen UĞRA'}
-                              </span>
+                              {(() => {
+                                const catBadge = getOrderCategoryBadge(order);
+                                return (
+                                  <span className={`px-2.5 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider border ${catBadge.className}`}>
+                                    {catBadge.label}
+                                  </span>
+                                );
+                              })()}
                               <span className="font-mono text-xs text-[#6B7280]">
                                 #{r.order_number}
                               </span>
@@ -2330,7 +2435,7 @@ export function AsistanPage() {
                             <button
                               type="button"
                               disabled={actionLoading === order.id}
-                              onClick={() => handleRejectOrder(order.id)}
+                              onClick={() => handleRejectOrder(order.id, (order as any).offer_id)}
                               className="py-3 rounded-xl bg-white hover:bg-red-50 text-[#EF4444] border border-[#EF4444] font-bold text-xs uppercase tracking-wider transition-all cursor-pointer shadow-sm flex items-center justify-center gap-1.5"
                             >
                               <span>Reddet</span>
@@ -2368,13 +2473,14 @@ export function AsistanPage() {
                           {/* 1. Sipariş No & Service Badge Header */}
                           <div className="flex items-center justify-between border-b border-[#E5E7EB] pb-2.5">
                             <div className="flex items-center gap-2">
-                              <span className={`px-2.5 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider border ${
-                                r.service_type === 'gecerken'
-                                  ? 'bg-blue-50 text-[#2563EB] border-blue-200'
-                                  : 'bg-emerald-50 text-[#10B981] border-emerald-200'
-                              }`}>
-                                {r.service_type === 'gecerken' ? 'Geçerken UĞRA' : 'Hemen UĞRA'}
-                              </span>
+                              {(() => {
+                                const catBadge = getOrderCategoryBadge(order);
+                                return (
+                                  <span className={`px-2.5 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider border ${catBadge.className}`}>
+                                    {catBadge.label}
+                                  </span>
+                                );
+                              })()}
                               <span className="font-mono text-xs text-[#6B7280]">
                                 #{r.order_number}
                               </span>
