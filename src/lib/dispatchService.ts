@@ -472,7 +472,6 @@ export class LiveDispatchService {
             expires_at: offerData.expires_at || new Date(Date.now() + 60000).toISOString(),
             courier_net: offerData.courier_net,
             customer_price: offerData.customer_price,
-            offered_price: offerData.courier_net || offerData.customer_price || 100,
             estimated_minutes: offerData.estimated_minutes,
             distance_km: offerData.distance_km,
             service_type: offerData.service_type

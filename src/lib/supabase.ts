@@ -1093,7 +1093,7 @@ export async function getExactTableColumns(tableName: string): Promise<string[]>
       wallet_transactions: ['id', 'wallet_id', 'amount', 'transaction_type', 'description', 'status', 'created_at'],
       dispatch_offers: [
         'id', 'dispatch_session_id', 'order_id', 'task_id', 'assistant_id', 'status',
-        'offered_price', 'courier_net', 'customer_price', 'offered_at', 'expires_at',
+        'courier_net', 'customer_price', 'offered_at', 'expires_at',
         'distance_km', 'estimated_minutes', 'service_type', 'wave_index', 'created_at', 'updated_at'
       ],
       dispatch_sessions: [
@@ -2929,7 +2929,7 @@ export const db = {
   },
 
   async getOrderById(orderId: string): Promise<Order | null> {
-    if (!orderId) return null;
+    if (!orderId || !isUUID(orderId)) return null;
     if (isSupabaseConfigured && supabase) {
       try {
         const client = await getActiveSupabaseClient();

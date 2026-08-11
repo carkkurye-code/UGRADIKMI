@@ -60,7 +60,7 @@ export class IntegrationService {
         let { taskId, customerId, price } = evt.payload;
         console.log(`[IntegrationEngine] Processing TASK_CREATED for task ${taskId}`);
 
-        if (!customerId && taskId && isSupabaseConfigured && supabase) {
+        if (!customerId && taskId && isUUID(taskId) && isSupabaseConfigured && supabase) {
           try {
             const { data: oData } = await supabase.from('orders').select('*').eq('id', taskId).maybeSingle();
             if (oData) customerId = oData.customer_id || oData.user_id || oData.partner_id;
@@ -111,7 +111,7 @@ export class IntegrationService {
         let { taskId, assistantId, customerId } = evt.payload;
         console.log(`[IntegrationEngine] Processing TASK_ACCEPTED for task ${taskId}`);
 
-        if ((!customerId || !assistantId) && taskId && isSupabaseConfigured && supabase) {
+        if ((!customerId || !assistantId) && taskId && isUUID(taskId) && isSupabaseConfigured && supabase) {
           try {
             const { data: tData } = await supabase.from('orders').select('customer_id, user_id, assistant_id').eq('id', taskId).maybeSingle();
             if (tData) {
@@ -156,7 +156,7 @@ export class IntegrationService {
         let { taskId, assistantId, customerId } = evt.payload;
         console.log(`[IntegrationEngine] Processing TASK_PICKED_UP for task ${taskId}`);
 
-        if ((!customerId || !assistantId) && taskId && isSupabaseConfigured && supabase) {
+        if ((!customerId || !assistantId) && taskId && isUUID(taskId) && isSupabaseConfigured && supabase) {
           try {
             const { data: tData } = await supabase.from('orders').select('customer_id, user_id, assistant_id').eq('id', taskId).maybeSingle();
             if (tData) {
@@ -190,7 +190,7 @@ export class IntegrationService {
         let { taskId, assistantId, customerId, partnerId, price } = evt.payload;
         console.log(`[IntegrationEngine] Processing TASK_COMPLETED for task ${taskId}`);
 
-        if ((!customerId || !assistantId) && taskId && isSupabaseConfigured && supabase) {
+        if ((!customerId || !assistantId) && taskId && isUUID(taskId) && isSupabaseConfigured && supabase) {
           try {
             const { data: tData } = await supabase.from('orders').select('customer_id, user_id, assistant_id, partner_id, total_price, customer_price').eq('id', taskId).maybeSingle();
             if (tData) {
@@ -277,7 +277,7 @@ export class IntegrationService {
         let { taskId, customerId, assistantId, price, reason } = evt.payload;
         console.log(`[IntegrationEngine] Processing TASK_CANCELLED for task ${taskId}`);
 
-        if ((!customerId || !assistantId) && taskId && isSupabaseConfigured && supabase) {
+        if ((!customerId || !assistantId) && taskId && isUUID(taskId) && isSupabaseConfigured && supabase) {
           try {
             const { data: tData } = await supabase.from('orders').select('customer_id, user_id, assistant_id').eq('id', taskId).maybeSingle();
             if (tData) {
