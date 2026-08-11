@@ -7,12 +7,12 @@ type ModalEntry = {
 };
 
 const modalStack: ModalEntry[] = [];
-let isProgrammaticPop = false;
+let programmaticPopCount = 0;
 
 if (typeof window !== 'undefined') {
   window.addEventListener('popstate', () => {
-    if (isProgrammaticPop) {
-      isProgrammaticPop = false;
+    if (programmaticPopCount > 0) {
+      programmaticPopCount--;
       return;
     }
 
@@ -86,8 +86,14 @@ export function useModalBackButton(isOpen: boolean, onClose: () => void, modalId
           window.history.state.isUgrawModalOpen &&
           window.history.state.modalId === currentId
         ) {
-          isProgrammaticPop = true;
-          window.history.back();
+          programmaticPopCount++;
+          setTimeout(() => {
+            try {
+              window.history.back();
+            } catch (err) {
+              console.warn('Deferred history.back() warning:', err);
+            }
+          }, 0);
         }
       }
     };

@@ -40,35 +40,51 @@ class EventBus {
     }
   }
 
+  private publishDepth = 0;
+
   /**
    * Publish an event synchronously to all active subscribers
    */
   public async publish<T = any>(event: DomainEvent<T>): Promise<void> {
-    console.log(`[EventBus] Publishing event: ${event.type} (ID: ${event.id})`, event.payload);
-    const subscribers = this.handlers.get(event.type);
-    if (!subscribers || subscribers.size === 0) {
-      return;
+    if (this.publishDepth > 10) {
+      console.warn(`[EventBus] High recursion depth (${this.publishDepth}) detected for event ${event.type}. Deferring execution to async task.`);
+      return new Promise<void>((resolve) => {
+        setTimeout(() => {
+          this.publish(event).then(resolve);
+        }, 0);
+      });
     }
 
-    const promises: Promise<void>[] = [];
-    subscribers.forEach((handler) => {
-      try {
-        const result = handler(event);
-        if (result instanceof Promise) {
-          promises.push(
-            result.catch((err) => {
-              console.error(`[EventBus] Handler error for event ${event.type}:`, err);
-              this.queue(event, 3, err?.message || String(err));
-            })
-          );
-        }
-      } catch (err: any) {
-        console.error(`[EventBus] Sync handler error for event ${event.type}:`, err);
-        this.queue(event, 3, err?.message || String(err));
+    this.publishDepth++;
+    try {
+      console.log(`[EventBus] Publishing event: ${event.type} (ID: ${event.id})`, event.payload);
+      const subscribers = this.handlers.get(event.type);
+      if (!subscribers || subscribers.size === 0) {
+        return;
       }
-    });
 
-    await Promise.allSettled(promises);
+      const promises: Promise<void>[] = [];
+      subscribers.forEach((handler) => {
+        try {
+          const result = handler(event);
+          if (result instanceof Promise) {
+            promises.push(
+              result.catch((err) => {
+                console.error(`[EventBus] Handler error for event ${event.type}:`, err);
+                this.queue(event, 3, err?.message || String(err));
+              })
+            );
+          }
+        } catch (err: any) {
+          console.error(`[EventBus] Sync handler error for event ${event.type}:`, err);
+          this.queue(event, 3, err?.message || String(err));
+        }
+      });
+
+      await Promise.allSettled(promises);
+    } finally {
+      this.publishDepth = Math.max(0, this.publishDepth - 1);
+    }
   }
 
   /**
