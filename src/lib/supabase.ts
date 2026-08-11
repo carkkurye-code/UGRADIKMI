@@ -2843,6 +2843,91 @@ export const db = {
     }
   },
 
+  async createStoreOrder(params: {
+    partner_id: string;
+    items: Array<{ product_id: string; quantity: number; title?: string }>;
+    assistant_fee: number;
+    delivery_address: string;
+    delivery_lat?: number;
+    delivery_lng?: number;
+    customer_name?: string;
+    customer_phone?: string;
+    customer_note?: string;
+  }): Promise<any> {
+    if (isSupabaseConfigured && supabase) {
+      const client = await getActiveSupabaseClient();
+      console.log('🚀 Calling create_store_order RPC with params:', params);
+
+      const { data, error } = await client.rpc('create_store_order', {
+        p_partner_id: params.partner_id,
+        p_items: params.items,
+        p_assistant_fee: Number(params.assistant_fee) || 100,
+        p_delivery_address: params.delivery_address || '',
+        p_delivery_lat: params.delivery_lat !== undefined ? Number(params.delivery_lat) : null,
+        p_delivery_lng: params.delivery_lng !== undefined ? Number(params.delivery_lng) : null,
+        p_customer_name: params.customer_name || '',
+        p_customer_phone: params.customer_phone || '',
+        p_customer_note: params.customer_note || ''
+      });
+
+      if (error) {
+        console.error('❌ RPC create_store_order failed:', error);
+        throw new Error(error.message || 'Mağaza siparişi oluşturulamadı');
+      }
+
+      const result = typeof data === 'string' ? JSON.parse(data) : data;
+      if (!result || !result.task_id) {
+        console.error('❌ RPC create_store_order returned invalid data:', data);
+        throw new Error('Sipariş sunucudan geçersiz yanıt döndürdü');
+      }
+
+      console.log('✅ RPC create_store_order success:', result);
+
+      const returnedTask = {
+        id: result.task_id,
+        task_id: result.task_id,
+        partner_id: params.partner_id,
+        status: result.status || 'bekliyor',
+        total_price: Number(result.total_price) || 0,
+        customer_price: Number(result.customer_price) || 0,
+        courier_net: Number(result.courier_net) || 0,
+        base_price: Number(result.base_price) || 0,
+        verification_code: result.verification_code || '0000',
+        service_type: result.service_type || 'asistan_siparis',
+        task_description: result.task_description || '',
+        created_at: new Date().toISOString()
+      };
+
+      const localTasks = getStored<any>('ugra_tasks_cache');
+      localTasks.unshift(returnedTask);
+      setStored('ugra_tasks_cache', localTasks);
+
+      return returnedTask;
+    } else {
+      const localTasks = getStored<any>('ugra_tasks_cache');
+      const newTaskId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : 't_' + Math.random().toString(36).substr(2, 9);
+      const mockTask = {
+        id: newTaskId,
+        task_id: newTaskId,
+        partner_id: params.partner_id,
+        status: 'bekliyor',
+        delivery_address: params.delivery_address,
+        delivery_lat: params.delivery_lat,
+        delivery_lng: params.delivery_lng,
+        courier_net: params.assistant_fee,
+        total_price: params.assistant_fee,
+        customer_price: params.assistant_fee,
+        base_price: 0,
+        service_type: 'asistan_siparis',
+        verification_code: Math.floor(1000 + Math.random() * 9000).toString(),
+        created_at: new Date().toISOString()
+      };
+      localTasks.unshift(mockTask);
+      setStored('ugra_tasks_cache', localTasks);
+      return mockTask;
+    }
+  },
+
   async getOrderById(orderId: string): Promise<Order | null> {
     if (!orderId) return null;
     if (isSupabaseConfigured && supabase) {

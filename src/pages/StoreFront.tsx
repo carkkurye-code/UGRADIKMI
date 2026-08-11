@@ -623,61 +623,39 @@ export function StoreFront() {
     }
     setOrderSubmitting(true);
     try {
-      const orderItems = cart.map(item => {
-        let displayTitle = item.product.title;
-        if (item.selectedOptions && Object.keys(item.selectedOptions).length > 0) {
-          const opts = Object.values(item.selectedOptions).join(' / ');
-          displayTitle += ` (${opts})`;
-        }
-        if (item.cardNote) {
-          displayTitle += ` [Not: ${item.cardNote}]`;
-        }
-        return {
-          product_id: item.product.id,
-          name: displayTitle,
-          title: displayTitle,
-          price: item.product.price,
-          quantity: item.quantity
-        };
+      const itemMap = new Map<string, number>();
+      cart.forEach(item => {
+        if (!item.product || !item.product.id) return;
+        const currentQty = itemMap.get(item.product.id) || 0;
+        itemMap.set(item.product.id, currentQty + item.quantity);
       });
+
+      const orderItems = Array.from(itemMap.entries()).map(([product_id, quantity]) => ({
+        product_id,
+        quantity
+      }));
 
       const effectiveFee = assistantFeeNum;
 
-      const itemsListText = orderItems.map(i => `• ${i.name} x${i.quantity} (${i.price} ₺)`).join('\n');
-      const fullTaskDescription = `[Mağaza Siparişi - ${partner.business_name}]\n\nSipariş İçeriği:\n${itemsListText}\n\nÜrün Toplamı: ${cartTotal} ₺\nAsistan Hizmet Bedeli: ${effectiveFee} ₺\nGenel Toplam: ${cartTotal + effectiveFee} ₺${orderNote.trim() ? '\n\nMüşteri Notu: ' + orderNote.trim() : ''}`;
-
-      const newTaskData = {
+      // Create store task via secure RPC (bypasses direct tasks INSERT RLS safely)
+      console.log("BEFORE createStoreOrder RPC");
+      const savedTask = await db.createStoreOrder({
         partner_id: partner.id,
-        customer_id: user?.id,
-        customer_name: custName.trim(),
-        customer_phone: custPhone.trim(),
-        customer_address: custAddress.trim(),
+        items: orderItems,
+        assistant_fee: effectiveFee,
         delivery_address: custAddress.trim(),
-        pickup_address: partner.address || partner.business_name || 'Mağaza',
-        pickup_lat: gpsLocation?.lat || structuredGpsAddress?.latitude,
-        pickup_lng: gpsLocation?.lng || structuredGpsAddress?.longitude,
         delivery_lat: gpsLocation?.lat || structuredGpsAddress?.latitude,
         delivery_lng: gpsLocation?.lng || structuredGpsAddress?.longitude,
-        total_price: cartTotal + effectiveFee,
-        customer_price: cartTotal + effectiveFee,
-        courier_net: effectiveFee,
-        base_price: cartTotal,
-        task_description: fullTaskDescription,
-        service_type: 'asistan_siparis',
-        verification_code: Math.floor(1000 + Math.random() * 9000).toString(),
-        items: orderItems,
-        notes: orderNote.trim()
-      };
-
-      // Save task to database (tasks table for store product orders)
-      console.log("BEFORE createTask");
-      const savedTask = await db.createTask(newTaskData);
-      console.log("AFTER createTask");
+        customer_name: custName.trim(),
+        customer_phone: custPhone.trim(),
+        customer_note: orderNote.trim()
+      });
+      console.log("AFTER createStoreOrder RPC:", savedTask);
 
       const taskDispatchInput: any = {
         ...savedTask,
-        id: savedTask.id,
-        task_id: savedTask.id,
+        id: savedTask.id || savedTask.task_id,
+        task_id: savedTask.id || savedTask.task_id,
         is_task: true,
         source: 'tasks',
         partner_id: partner.id,
@@ -686,10 +664,10 @@ export function StoreFront() {
         customer_phone: custPhone.trim(),
         customer_address: custAddress.trim(),
         delivery_address: custAddress.trim(),
-        courier_net: effectiveFee,
-        customer_price: cartTotal + effectiveFee,
-        total_price: cartTotal + effectiveFee,
-        notes: fullTaskDescription,
+        courier_net: savedTask.courier_net || effectiveFee,
+        customer_price: savedTask.customer_price || (cartTotal + effectiveFee),
+        total_price: savedTask.total_price || (cartTotal + effectiveFee),
+        notes: savedTask.task_description,
         service_type: 'asistan_siparis'
       };
 
