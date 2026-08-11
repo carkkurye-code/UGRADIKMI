@@ -106,16 +106,45 @@ export class TaskService {
    * Fetch a single task by ID
    */
   public static async getTaskById(taskId: string): Promise<ServiceResult<Task>> {
+    if (!taskId || !isUUID(taskId)) {
+      return { success: false, error: 'Görev bulunamadı.' };
+    }
+
     if (isSupabaseConfigured && supabase) {
       try {
-        const { data, error } = await supabase
+        // 1. Check tasks table first
+        const { data: taskData } = await supabase
+          .from('tasks')
+          .select('*')
+          .eq('id', taskId)
+          .maybeSingle();
+
+        if (taskData) {
+          if (taskData.order_id && isUUID(taskData.order_id)) {
+            const { data: orderData } = await supabase
+              .from('orders')
+              .select('*')
+              .eq('id', taskData.order_id)
+              .maybeSingle();
+
+            if (orderData) {
+              return { success: true, data: { ...orderData, ...taskData } as Task };
+            }
+          }
+          return { success: true, data: taskData as Task };
+        }
+
+        // 2. Fallback check orders table if taskId is an order_id UUID
+        const { data: orderData, error: orderErr } = await supabase
           .from('orders')
           .select('*')
           .eq('id', taskId)
-          .single();
+          .maybeSingle();
 
-        if (error) return { success: false, error: error.message };
-        return { success: true, data: data as Task };
+        if (orderErr) return { success: false, error: orderErr.message };
+        if (!orderData) return { success: false, error: 'Görev bulunamadı.' };
+
+        return { success: true, data: orderData as Task };
       } catch (err: any) {
         return { success: false, error: err.message };
       }
@@ -156,9 +185,13 @@ export class TaskService {
    * 3. Accept Task (Atomic execution to prevent duplicate assistant assignment)
    */
   public static async acceptTask(taskId: string, assistantId: string): Promise<ServiceResult<Task>> {
+    if (!taskId || !isUUID(taskId)) {
+      return { success: false, error: 'Görev bulunamadı.' };
+    }
+
     if (isSupabaseConfigured && supabase) {
       try {
-        const validTaskUuid = isUUID(taskId) ? taskId : toUUID(taskId);
+        const validTaskUuid = taskId;
         const validAssistantUuid = isUUID(assistantId) ? assistantId : toUUID(assistantId);
 
         // Conditional update directly via orders table
@@ -251,6 +284,10 @@ export class TaskService {
     }
 
     try {
+      if (!taskId || !isUUID(taskId)) {
+        return { success: false, error: 'Görev bulunamadı.' };
+      }
+
       // Security check: Check if verification failed 3 times
       const { data: wrongAttempts } = await supabase
         .from('task_events')
@@ -266,12 +303,26 @@ export class TaskService {
         };
       }
 
-      const { data: task, error } = await supabase.from('orders').select('delivery_code').eq('id', taskId).single();
-      if (error || !task) {
+      let taskCode: string | null = null;
+      let orderIdToUpdate: string | null = null;
+
+      const { data: taskData } = await supabase.from('tasks').select('delivery_code, order_id').eq('id', taskId).maybeSingle();
+      if (taskData) {
+        taskCode = taskData.delivery_code;
+        orderIdToUpdate = taskData.order_id;
+        await supabase.from('tasks').update({ delivery_code_verified: true }).eq('id', taskId);
+      } else {
+        const { data: orderData } = await supabase.from('orders').select('delivery_code').eq('id', taskId).maybeSingle();
+        if (orderData) {
+          taskCode = orderData.delivery_code;
+        }
+      }
+
+      if (!taskCode) {
         return { success: false, error: 'Görev bulunamadı.' };
       }
 
-      const isMatch = (task.delivery_code || '').trim() === code.trim();
+      const isMatch = (taskCode || '').trim() === code.trim();
       if (!isMatch) {
         await this.logTaskEvent(taskId, actorId, 'assistant', 'verification_attempt', undefined, 'arrived_at_delivery', {
           success: false,
@@ -280,10 +331,17 @@ export class TaskService {
         return { success: false, error: 'Doğrulama kodu hatalı.' };
       }
 
-      await supabase
-        .from('orders')
-        .update({ delivery_code_verified: true })
-        .eq('id', taskId);
+      if (orderIdToUpdate && isUUID(orderIdToUpdate)) {
+        await supabase
+          .from('orders')
+          .update({ delivery_code_verified: true })
+          .eq('id', orderIdToUpdate);
+      } else if (isUUID(taskId)) {
+        await supabase
+          .from('orders')
+          .update({ delivery_code_verified: true })
+          .eq('id', taskId);
+      }
 
       await this.logTaskEvent(taskId, actorId, 'assistant', 'verification_attempt', undefined, 'arrived_at_delivery', {
         success: true,
@@ -368,16 +426,35 @@ export class TaskService {
     eventType: string = 'status_update',
     additionalUpdates: Record<string, any> = {}
   ): Promise<ServiceResult<Task>> {
+    if (!taskId || !isUUID(taskId)) {
+      return { success: false, error: 'Görev bulunamadı.' };
+    }
+
     if (isSupabaseConfigured && supabase) {
       try {
-        // 1. Fetch current status
-        const { data: currentTask, error: fetchErr } = await supabase
-          .from('orders')
+        // 1. Fetch current status (check tasks first, then orders)
+        let currentTask: any = null;
+        let isTasksTable = false;
+
+        const { data: tData } = await supabase
+          .from('tasks')
           .select('*')
           .eq('id', taskId)
-          .single();
+          .maybeSingle();
 
-        if (fetchErr || !currentTask) {
+        if (tData) {
+          currentTask = tData;
+          isTasksTable = true;
+        } else {
+          const { data: oData } = await supabase
+            .from('orders')
+            .select('*')
+            .eq('id', taskId)
+            .maybeSingle();
+          if (oData) currentTask = oData;
+        }
+
+        if (!currentTask) {
           return { success: false, error: 'Görev bulunamadı.' };
         }
 
@@ -391,21 +468,45 @@ export class TaskService {
           };
         }
 
-        // 3. Update order
+        // 3. Update task/order
         const updatePayload = {
           status: targetStatus,
           ...additionalUpdates,
         };
 
-        const { data: updatedTask, error: updateErr } = await supabase
-          .from('orders')
-          .update(updatePayload)
-          .eq('id', taskId)
-          .select('*')
-          .single();
+        let updatedTask: any = null;
 
-        if (updateErr) {
-          return { success: false, error: updateErr.message };
+        if (isTasksTable) {
+          const { data: uTask, error: uErr } = await supabase
+            .from('tasks')
+            .update(updatePayload)
+            .eq('id', taskId)
+            .select('*')
+            .maybeSingle();
+
+          if (uErr) {
+            return { success: false, error: uErr.message };
+          }
+          updatedTask = uTask || { ...currentTask, ...updatePayload };
+
+          if (currentTask.order_id && isUUID(currentTask.order_id)) {
+            await supabase
+              .from('orders')
+              .update(updatePayload)
+              .eq('id', currentTask.order_id);
+          }
+        } else {
+          const { data: uOrder, error: uErr } = await supabase
+            .from('orders')
+            .update(updatePayload)
+            .eq('id', taskId)
+            .select('*')
+            .single();
+
+          if (uErr) {
+            return { success: false, error: uErr.message };
+          }
+          updatedTask = uOrder;
         }
 
         // 4. Log event

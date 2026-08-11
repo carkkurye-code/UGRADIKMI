@@ -30,19 +30,26 @@ export class RatingService {
 
     if (isSupabaseConfigured && supabase) {
       try {
-        // If task_id provided, ensure order status is completed/delivered
-        if (input.task_id) {
-          const { data: order, error: orderErr } = await supabase
-            .from('orders')
-            .select('status')
-            .eq('id', input.task_id)
-            .single();
+        // If task_id provided, ensure order/task status is completed/delivered
+        if (input.task_id && isUUID(input.task_id)) {
+          let orderStatus: string | null = null;
+          const { data: tData } = await supabase.from('tasks').select('status, order_id').eq('id', input.task_id).maybeSingle();
+          if (tData) {
+            orderStatus = tData.status;
+            if (tData.order_id && isUUID(tData.order_id)) {
+              const { data: oData } = await supabase.from('orders').select('status').eq('id', tData.order_id).maybeSingle();
+              if (oData) orderStatus = oData.status;
+            }
+          } else {
+            const { data: oData } = await supabase.from('orders').select('status').eq('id', input.task_id).maybeSingle();
+            if (oData) orderStatus = oData.status;
+          }
 
-          if (orderErr || !order) {
+          if (!orderStatus) {
             return { success: false, error: 'İlişkili sipariş bulunamadı.' };
           }
 
-          if (order.status !== 'completed' && order.status !== 'teslim_edildi') {
+          if (orderStatus !== 'completed' && orderStatus !== 'teslim_edildi') {
             return { success: false, error: 'Tamamlanmamış siparişler için puanlama yapılamaz.' };
           }
 

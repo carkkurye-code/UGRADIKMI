@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useRoute, Link, useLocation } from 'wouter';
-import { db, Partner, Product, Order, normalizeCategory, isSupabaseConfigured, isStoreOpen } from '@/lib/supabase';
+import { db, Partner, Product, Order, normalizeCategory, isSupabaseConfigured, isStoreOpen, isUUID } from '@/lib/supabase';
 import { getCategoryKey, getProductVariantGroups, getProductTypeOptions, getSubcategoryOptions } from '@/lib/categoryVariants';
 import { sendOrderToPartnerWhatsApp } from '@/lib/whatsapp';
 import { ProductCard } from '@/components/ProductCard';
@@ -389,11 +389,11 @@ export function StoreFront() {
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
   const [orderSuccess, setOrderSuccess] = useState(false);
   const [waUrl, setWaUrl] = useState('');
-  const [createdTaskId, setCreatedTaskId] = useState<string>('task-p1');
+  const [createdTaskId, setCreatedTaskId] = useState<string>('');
   const [trackingState, setTrackingState] = useState<CustomerTrackingState | null>(null);
 
   useEffect(() => {
-    if (!orderSuccess) return;
+    if (!orderSuccess || !createdTaskId || !isUUID(createdTaskId)) return;
     const fetchTracking = async () => {
       const state = await CustomerTrackingService.getLiveTrackingState(createdTaskId, 'cust-1');
       if (state) {
@@ -651,6 +651,10 @@ export function StoreFront() {
         customer_note: orderNote.trim()
       });
       console.log("AFTER createStoreOrder RPC:", savedTask);
+      const newTaskId = savedTask?.id || savedTask?.task_id || '';
+      if (newTaskId) {
+        setCreatedTaskId(newTaskId);
+      }
 
       const taskDispatchInput: any = {
         ...savedTask,

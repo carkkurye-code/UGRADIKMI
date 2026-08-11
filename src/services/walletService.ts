@@ -415,12 +415,29 @@ export class WalletService {
    * 9. Calculate Payout for a specific Task
    */
   public static async calculatePayout(taskId: string): Promise<WalletServiceResult<CommissionBreakdown>> {
+    if (!taskId || !isUUID(taskId)) {
+      return { success: false, error: 'Sipariş bulunamadı.' };
+    }
+
     if (isSupabaseConfigured && supabase) {
       try {
-        const { data: order, error } = await supabase.from('orders').select('*').eq('id', taskId).single();
-        if (error || !order) return { success: false, error: 'Sipariş bulunamadı.' };
+        let order: any = null;
+        const { data: taskData } = await supabase.from('tasks').select('*').eq('id', taskId).maybeSingle();
+        if (taskData) {
+          if (taskData.order_id && isUUID(taskData.order_id)) {
+            const { data: oData } = await supabase.from('orders').select('*').eq('id', taskData.order_id).maybeSingle();
+            order = oData || taskData;
+          } else {
+            order = taskData;
+          }
+        } else {
+          const { data: oData } = await supabase.from('orders').select('*').eq('id', taskId).maybeSingle();
+          order = oData;
+        }
 
-        const price = Number(order.total_price || order.customer_price || 0);
+        if (!order) return { success: false, error: 'Sipariş bulunamadı.' };
+
+        const price = Number(order.total_price || order.customer_price || order.courier_net || 0);
         const breakdown = this.calculateCommission(price);
         return { success: true, data: breakdown };
       } catch (err: any) {
@@ -435,10 +452,14 @@ export class WalletService {
    * 10. Capture Payment for Completed Task
    */
   public static async capturePayment(taskId: string, paymentReference?: string): Promise<WalletServiceResult<PaymentTransaction>> {
+    if (!taskId || !isUUID(taskId)) {
+      return { success: false, error: 'Sipariş bulunamadı.' };
+    }
+
     if (isSupabaseConfigured && supabase) {
       try {
         // Idempotency check: Return existing captured payment if already captured
-        const validTaskUuid = isUUID(taskId) ? taskId : toUUID(taskId);
+        const validTaskUuid = taskId;
 
         const { data: existingPayment } = await supabase
           .from('payment_transactions')
@@ -451,8 +472,20 @@ export class WalletService {
           return { success: true, data: existingPayment as PaymentTransaction };
         }
 
-        // Direct Table insertion
-        const { data: order } = await supabase.from('orders').select('*').eq('id', validTaskUuid).maybeSingle();
+        let order: any = null;
+        const { data: taskData } = await supabase.from('tasks').select('*').eq('id', validTaskUuid).maybeSingle();
+        if (taskData) {
+          if (taskData.order_id && isUUID(taskData.order_id)) {
+            const { data: oData } = await supabase.from('orders').select('*').eq('id', taskData.order_id).maybeSingle();
+            order = oData || taskData;
+          } else {
+            order = taskData;
+          }
+        } else {
+          const { data: oData } = await supabase.from('orders').select('*').eq('id', validTaskUuid).maybeSingle();
+          order = oData;
+        }
+
         if (!order) return { success: false, error: 'Sipariş bulunamadı.' };
 
         const price = Number(order.total_price || order.customer_price || 0);

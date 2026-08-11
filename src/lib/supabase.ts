@@ -2933,6 +2933,34 @@ export const db = {
     if (isSupabaseConfigured && supabase) {
       try {
         const client = await getActiveSupabaseClient();
+        
+        // 1. First check tasks table
+        const { data: taskData } = await client.from('tasks').select('*').eq('id', orderId).maybeSingle();
+        if (taskData) {
+          if (taskData.order_id && isUUID(taskData.order_id)) {
+            const { data: orderData } = await client.from('orders').select('*').eq('id', taskData.order_id).maybeSingle();
+            if (orderData) {
+              return {
+                ...orderData,
+                ...taskData,
+                id: taskData.id,
+                task_id: taskData.id,
+                total_price: Number(orderData.total_price || orderData.customer_price || taskData.courier_net || 0),
+                customer_price: Number(orderData.customer_price || orderData.total_price || taskData.customer_price || 0),
+              } as Order;
+            }
+          }
+          // task.order_id is null: Return taskData directly without querying orders table
+          return {
+            ...taskData,
+            id: taskData.id,
+            task_id: taskData.id,
+            total_price: Number(taskData.customer_price || taskData.courier_net || 0),
+            customer_price: Number(taskData.customer_price || 0),
+          } as Order;
+        }
+
+        // 2. Fallback: Query orders table directly with orderId UUID
         const { data, error } = await client.from('orders').select('*').eq('id', orderId).maybeSingle();
 
         if (error) {
