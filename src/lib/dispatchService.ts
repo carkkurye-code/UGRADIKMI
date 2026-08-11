@@ -569,25 +569,54 @@ export class LiveDispatchService {
       if (isSupabaseConfigured && supabase) {
         try {
           if (isUUID(orderId)) {
-            const { data: checkOrder, error: checkErr } = await supabase
-              .from('orders')
-              .select('*')
-              .eq('id', orderId)
-              .maybeSingle();
-
-            if (!checkErr && checkOrder) {
-              if (checkOrder.assistant_id && checkOrder.assistant_id !== assistantId) {
+            // Check tasks table first
+            const { data: checkTask } = await supabase.from('tasks').select('*').eq('id', orderId).maybeSingle();
+            if (checkTask) {
+              if (checkTask.assistant_id && checkTask.assistant_id !== assistantId) {
                 return {
                   success: false,
                   error: 'Bu sipariş başka bir asistan tarafından kabul edildi.'
                 };
               }
-              if (checkOrder.status === 'accepted' || checkOrder.status === 'on_the_way' || checkOrder.status === 'delivered' || checkOrder.status === 'completed') {
-                if (checkOrder.assistant_id !== assistantId) {
+              if (['accepted', 'on_the_way', 'delivered', 'completed'].includes(checkTask.status)) {
+                if (checkTask.assistant_id !== assistantId) {
                   return {
                     success: false,
                     error: 'Bu sipariş başka bir asistan tarafından zaten üstlenildi.'
                   };
+                }
+              }
+              if (checkTask.order_id && isUUID(checkTask.order_id)) {
+                console.log('[OrderFetch] orders.id being queried:', checkTask.order_id);
+                const { data: checkOrder } = await supabase.from('orders').select('*').eq('id', checkTask.order_id).maybeSingle();
+                if (checkOrder) {
+                  if (checkOrder.assistant_id && checkOrder.assistant_id !== assistantId) {
+                    return { success: false, error: 'Bu sipariş başka bir asistan tarafından kabul edildi.' };
+                  }
+                }
+              }
+            } else {
+              console.log('[OrderFetch] orders.id being queried:', orderId);
+              const { data: checkOrder, error: checkErr } = await supabase
+                .from('orders')
+                .select('*')
+                .eq('id', orderId)
+                .maybeSingle();
+
+              if (!checkErr && checkOrder) {
+                if (checkOrder.assistant_id && checkOrder.assistant_id !== assistantId) {
+                  return {
+                    success: false,
+                    error: 'Bu sipariş başka bir asistan tarafından kabul edildi.'
+                  };
+                }
+                if (checkOrder.status === 'accepted' || checkOrder.status === 'on_the_way' || checkOrder.status === 'delivered' || checkOrder.status === 'completed') {
+                  if (checkOrder.assistant_id !== assistantId) {
+                    return {
+                      success: false,
+                      error: 'Bu sipariş başka bir asistan tarafından zaten üstlenildi.'
+                    };
+                  }
                 }
               }
             }
@@ -674,8 +703,19 @@ export class LiveDispatchService {
       let resolvedCustomerId: string | undefined = undefined;
       if (isSupabaseConfigured && supabase && isUUID(orderId)) {
         try {
-          const { data: ord } = await supabase.from('orders').select('*').eq('id', orderId).maybeSingle();
-          if (ord) resolvedCustomerId = ord.customer_id || ord.user_id || ord.partner_id;
+          const { data: tMatch } = await supabase.from('tasks').select('customer_id, user_id, order_id').eq('id', orderId).maybeSingle();
+          if (tMatch) {
+            resolvedCustomerId = tMatch.customer_id || tMatch.user_id;
+            if (!resolvedCustomerId && tMatch.order_id && isUUID(tMatch.order_id)) {
+              console.log('[OrderFetch] orders.id being queried:', tMatch.order_id);
+              const { data: ord } = await supabase.from('orders').select('*').eq('id', tMatch.order_id).maybeSingle();
+              if (ord) resolvedCustomerId = ord.customer_id || ord.user_id || ord.partner_id;
+            }
+          } else {
+            console.log('[OrderFetch] orders.id being queried:', orderId);
+            const { data: ord } = await supabase.from('orders').select('*').eq('id', orderId).maybeSingle();
+            if (ord) resolvedCustomerId = ord.customer_id || ord.user_id || ord.partner_id;
+          }
         } catch (e) {}
       }
 
@@ -762,8 +802,21 @@ export class LiveDispatchService {
       targetOrder = localOrders.find(o => o.id === orderId) || null;
 
       if (!targetOrder && isSupabaseConfigured && supabase && isUUID(orderId)) {
-        const { data } = await supabase.from('orders').select('*').eq('id', orderId).maybeSingle();
-        if (data) targetOrder = data as Order;
+        const { data: tMatch } = await supabase.from('tasks').select('*').eq('id', orderId).maybeSingle();
+        if (tMatch) {
+          if (tMatch.order_id && isUUID(tMatch.order_id)) {
+            console.log('[OrderFetch] orders.id being queried:', tMatch.order_id);
+            const { data: oMatch } = await supabase.from('orders').select('*').eq('id', tMatch.order_id).maybeSingle();
+            if (oMatch) targetOrder = { ...oMatch, ...tMatch } as any;
+            else targetOrder = tMatch as any;
+          } else {
+            targetOrder = tMatch as any;
+          }
+        } else {
+          console.log('[OrderFetch] orders.id being queried:', orderId);
+          const { data } = await supabase.from('orders').select('*').eq('id', orderId).maybeSingle();
+          if (data) targetOrder = data as Order;
+        }
       }
 
       if (targetOrder) {
@@ -794,18 +847,29 @@ export class LiveDispatchService {
         try {
           const client = await getActiveSupabaseClient();
           if (isUUID(orderId)) {
-            // Update orders table
-            const { data, error } = await client
-              .from('orders')
-              .update({
-                status: newStatus
-              })
-              .eq('id', orderId)
-              .select('*')
-              .maybeSingle();
+            const { data: tMatch } = await client.from('tasks').select('id, order_id').eq('id', orderId).maybeSingle();
+            if (tMatch) {
+              const { data: uTask } = await client.from('tasks').update({ status: newStatus }).eq('id', orderId).select('*').maybeSingle();
+              if (uTask) updatedOrder = uTask as Order;
+              if (tMatch.order_id && isUUID(tMatch.order_id)) {
+                console.log('[OrderFetch] orders.id being queried:', tMatch.order_id);
+                const { data: uOrder } = await client.from('orders').update({ status: newStatus }).eq('id', tMatch.order_id).select('*').maybeSingle();
+                if (uOrder) updatedOrder = { ...(uOrder as Order), ...updatedOrder };
+              }
+            } else {
+              console.log('[OrderFetch] orders.id being queried:', orderId);
+              const { data, error } = await client
+                .from('orders')
+                .update({
+                  status: newStatus
+                })
+                .eq('id', orderId)
+                .select('*')
+                .maybeSingle();
 
-            if (!error && data) {
-              updatedOrder = data as Order;
+              if (!error && data) {
+                updatedOrder = data as Order;
+              }
             }
           }
         } catch (dbErr) {

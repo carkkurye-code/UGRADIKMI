@@ -468,12 +468,21 @@ export class DispatchEngine {
       if (!realCustomerId && isSupabaseConfigured && supabase) {
         try {
           const { data: tData } = await supabase
-            .from('orders')
-            .select('customer_id, user_id')
+            .from('tasks')
+            .select('customer_id, user_id, order_id')
             .eq('id', taskId)
             .maybeSingle();
           if (tData) {
             realCustomerId = tData.customer_id || tData.user_id || '';
+            if (!realCustomerId && tData.order_id && isUUID(tData.order_id)) {
+              console.log('[OrderFetch] orders.id being queried:', tData.order_id);
+              const { data: oData } = await supabase
+                .from('orders')
+                .select('customer_id, user_id')
+                .eq('id', tData.order_id)
+                .maybeSingle();
+              if (oData) realCustomerId = oData.customer_id || oData.user_id || '';
+            }
           }
         } catch (err) {
           console.warn('[DispatchEngine] Failed to resolve task customer_id:', err);

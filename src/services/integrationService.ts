@@ -62,8 +62,15 @@ export class IntegrationService {
 
         if (!customerId && taskId && isUUID(taskId) && isSupabaseConfigured && supabase) {
           try {
-            const { data: oData } = await supabase.from('orders').select('*').eq('id', taskId).maybeSingle();
-            if (oData) customerId = oData.customer_id || oData.user_id || oData.partner_id;
+            const { data: tData } = await supabase.from('tasks').select('*').eq('id', taskId).maybeSingle();
+            if (tData) {
+              customerId = tData.customer_id || tData.user_id || tData.partner_id;
+              if (!customerId && tData.order_id && isUUID(tData.order_id)) {
+                console.log('[OrderFetch] orders.id being queried:', tData.order_id);
+                const { data: oData } = await supabase.from('orders').select('*').eq('id', tData.order_id).maybeSingle();
+                if (oData) customerId = oData.customer_id || oData.user_id || oData.partner_id;
+              }
+            }
           } catch (e) {}
         }
 
@@ -113,10 +120,18 @@ export class IntegrationService {
 
         if ((!customerId || !assistantId) && taskId && isUUID(taskId) && isSupabaseConfigured && supabase) {
           try {
-            const { data: tData } = await supabase.from('orders').select('customer_id, user_id, assistant_id').eq('id', taskId).maybeSingle();
+            const { data: tData } = await supabase.from('tasks').select('customer_id, user_id, assistant_id, order_id').eq('id', taskId).maybeSingle();
             if (tData) {
               if (!customerId) customerId = tData.customer_id || tData.user_id;
               if (!assistantId) assistantId = tData.assistant_id;
+              if ((!customerId || !assistantId) && tData.order_id && isUUID(tData.order_id)) {
+                console.log('[OrderFetch] orders.id being queried:', tData.order_id);
+                const { data: oData } = await supabase.from('orders').select('customer_id, user_id, assistant_id').eq('id', tData.order_id).maybeSingle();
+                if (oData) {
+                  if (!customerId) customerId = oData.customer_id || oData.user_id;
+                  if (!assistantId) assistantId = oData.assistant_id;
+                }
+              }
             }
           } catch (e) {}
         }
@@ -158,10 +173,18 @@ export class IntegrationService {
 
         if ((!customerId || !assistantId) && taskId && isUUID(taskId) && isSupabaseConfigured && supabase) {
           try {
-            const { data: tData } = await supabase.from('orders').select('customer_id, user_id, assistant_id').eq('id', taskId).maybeSingle();
+            const { data: tData } = await supabase.from('tasks').select('customer_id, user_id, assistant_id, order_id').eq('id', taskId).maybeSingle();
             if (tData) {
               if (!customerId) customerId = tData.customer_id || tData.user_id;
               if (!assistantId) assistantId = tData.assistant_id;
+              if ((!customerId || !assistantId) && tData.order_id && isUUID(tData.order_id)) {
+                console.log('[OrderFetch] orders.id being queried:', tData.order_id);
+                const { data: oData } = await supabase.from('orders').select('customer_id, user_id, assistant_id').eq('id', tData.order_id).maybeSingle();
+                if (oData) {
+                  if (!customerId) customerId = oData.customer_id || oData.user_id;
+                  if (!assistantId) assistantId = oData.assistant_id;
+                }
+              }
             }
           } catch (e) {}
         }
@@ -192,12 +215,22 @@ export class IntegrationService {
 
         if ((!customerId || !assistantId) && taskId && isUUID(taskId) && isSupabaseConfigured && supabase) {
           try {
-            const { data: tData } = await supabase.from('orders').select('customer_id, user_id, assistant_id, partner_id, total_price, customer_price').eq('id', taskId).maybeSingle();
+            const { data: tData } = await supabase.from('tasks').select('customer_id, user_id, assistant_id, partner_id, customer_price, courier_net, order_id').eq('id', taskId).maybeSingle();
             if (tData) {
               if (!customerId) customerId = tData.customer_id || tData.user_id;
               if (!assistantId) assistantId = tData.assistant_id;
               if (!partnerId) partnerId = tData.partner_id;
-              if (!price) price = Number(tData.total_price || tData.customer_price || 0);
+              if (!price) price = Number(tData.customer_price || tData.courier_net || 0);
+              if ((!customerId || !assistantId || !partnerId) && tData.order_id && isUUID(tData.order_id)) {
+                console.log('[OrderFetch] orders.id being queried:', tData.order_id);
+                const { data: oData } = await supabase.from('orders').select('customer_id, user_id, assistant_id, partner_id, total_price, customer_price').eq('id', tData.order_id).maybeSingle();
+                if (oData) {
+                  if (!customerId) customerId = oData.customer_id || oData.user_id;
+                  if (!assistantId) assistantId = oData.assistant_id;
+                  if (!partnerId) partnerId = oData.partner_id;
+                  if (!price) price = Number(oData.total_price || oData.customer_price || 0);
+                }
+              }
             }
           } catch (e) {}
         }
@@ -279,10 +312,18 @@ export class IntegrationService {
 
         if ((!customerId || !assistantId) && taskId && isUUID(taskId) && isSupabaseConfigured && supabase) {
           try {
-            const { data: tData } = await supabase.from('orders').select('customer_id, user_id, assistant_id').eq('id', taskId).maybeSingle();
+            const { data: tData } = await supabase.from('tasks').select('customer_id, user_id, assistant_id, order_id').eq('id', taskId).maybeSingle();
             if (tData) {
               if (!customerId) customerId = tData.customer_id || tData.user_id;
               if (!assistantId) assistantId = tData.assistant_id;
+              if ((!customerId || !assistantId) && tData.order_id && isUUID(tData.order_id)) {
+                console.log('[OrderFetch] orders.id being queried:', tData.order_id);
+                const { data: oData } = await supabase.from('orders').select('customer_id, user_id, assistant_id').eq('id', tData.order_id).maybeSingle();
+                if (oData) {
+                  if (!customerId) customerId = oData.customer_id || oData.user_id;
+                  if (!assistantId) assistantId = oData.assistant_id;
+                }
+              }
             }
           } catch (e) {}
         }

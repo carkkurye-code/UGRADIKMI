@@ -1739,23 +1739,33 @@ export function AsistanPage() {
 
   // 3. STATUS = "rezerve" -> "Doğrulandı"
   const handleVerifyOrder = async (orderId: string) => {
-    if (!currentAssistant) return;
+    if (!currentAssistant || !isUUID(orderId)) return;
     setActionLoading(orderId);
     try {
       const nowIso = new Date().toISOString();
       if (isSupabaseConfigured) {
         const activeClient = await getAuthenticatedClient();
-        const { error: ordersErr } = await activeClient
-          .from('orders')
-          .update({
-            status: 'dogrulandi',
-            verified_at: nowIso
-          })
-          .eq('id', orderId);
+        const { data: tData } = await activeClient.from('tasks').select('id, order_id').eq('id', orderId).maybeSingle();
+        if (tData) {
+          await activeClient.from('tasks').update({ status: 'dogrulandi', verified_at: nowIso }).eq('id', orderId);
+          if (tData.order_id && isUUID(tData.order_id)) {
+            console.log('[OrderFetch] orders.id being queried:', tData.order_id);
+            await activeClient.from('orders').update({ status: 'dogrulandi', verified_at: nowIso }).eq('id', tData.order_id);
+          }
+        } else {
+          console.log('[OrderFetch] orders.id being queried:', orderId);
+          const { error: ordersErr } = await activeClient
+            .from('orders')
+            .update({
+              status: 'dogrulandi',
+              verified_at: nowIso
+            })
+            .eq('id', orderId);
 
-        if (ordersErr) {
-          console.error('Error updating orders table for dogrulandi:', ordersErr);
-          throw new Error(ordersErr.message || 'Sipariş doğrulanırken veritabanı hatası oluştu.');
+          if (ordersErr) {
+            console.error('Error updating orders table for dogrulandi:', ordersErr);
+            throw new Error(ordersErr.message || 'Sipariş doğrulanırken veritabanı hatası oluştu.');
+          }
         }
       }
 
@@ -1774,37 +1784,48 @@ export function AsistanPage() {
 
   // 4. STATUS = "rezerve" -> "Ulaşılamadı" (İptal)
   const handleCancelOrder = async (orderId: string, reason: string) => {
-    if (!currentAssistant) return;
+    if (!currentAssistant || !isUUID(orderId)) return;
     setIsSubmittingCancel(true);
     try {
       const nowIso = new Date().toISOString();
       if (isSupabaseConfigured) {
         const activeClient = await getAuthenticatedClient();
-        let updateOrderErr = null;
-        const res1 = await activeClient
-          .from('orders')
-          .update({
-            status: 'cancelled',
-            cancel_reason: reason
-          })
-          .eq('id', orderId);
-
-        if (res1.error) {
-          const res2 = await activeClient
+        const { data: tData } = await activeClient.from('tasks').select('id, order_id').eq('id', orderId).maybeSingle();
+        if (tData) {
+          await activeClient.from('tasks').update({ status: 'cancelled', cancel_reason: reason }).eq('id', orderId);
+          if (tData.order_id && isUUID(tData.order_id)) {
+            console.log('[OrderFetch] orders.id being queried:', tData.order_id);
+            await activeClient.from('orders').update({ status: 'cancelled', cancel_reason: reason }).eq('id', tData.order_id);
+          }
+        } else {
+          console.log('[OrderFetch] orders.id being queried:', orderId);
+          let updateOrderErr = null;
+          const res1 = await activeClient
             .from('orders')
             .update({
-              status: 'iptal',
+              status: 'cancelled',
               cancel_reason: reason
             })
             .eq('id', orderId);
-          updateOrderErr = res2.error;
-        } else {
-          updateOrderErr = null;
-        }
 
-        if (updateOrderErr) {
-          console.error('Error updating orders table for cancel:', updateOrderErr);
-          throw new Error(updateOrderErr.message || 'Sipariş iptal edilirken veritabanı hatası oluştu.');
+          if (res1.error) {
+            console.log('[OrderFetch] orders.id being queried:', orderId);
+            const res2 = await activeClient
+              .from('orders')
+              .update({
+                status: 'iptal',
+                cancel_reason: reason
+              })
+              .eq('id', orderId);
+            updateOrderErr = res2.error;
+          } else {
+            updateOrderErr = null;
+          }
+
+          if (updateOrderErr) {
+            console.error('Error updating orders table for cancel:', updateOrderErr);
+            throw new Error(updateOrderErr.message || 'Sipariş iptal edilirken veritabanı hatası oluştu.');
+          }
         }
       }
 
@@ -1909,16 +1930,26 @@ export function AsistanPage() {
 
   // 5. STATUS = "dogrulandi" -> "Yola Çık"
   const handlePickupOrder = async (orderId: string) => {
-    if (!currentAssistant) return;
+    if (!currentAssistant || !isUUID(orderId)) return;
     setActionLoading(orderId);
     try {
       const nowIso = new Date().toISOString();
       if (isSupabaseConfigured) {
         const activeClient = await getAuthenticatedClient();
-        await activeClient.from('orders').update({
-          status: 'yolda',
-          picked_up_at: nowIso
-        }).eq('id', orderId);
+        const { data: tData } = await activeClient.from('tasks').select('id, order_id').eq('id', orderId).maybeSingle();
+        if (tData) {
+          await activeClient.from('tasks').update({ status: 'yolda', picked_up_at: nowIso }).eq('id', orderId);
+          if (tData.order_id && isUUID(tData.order_id)) {
+            console.log('[OrderFetch] orders.id being queried:', tData.order_id);
+            await activeClient.from('orders').update({ status: 'yolda', picked_up_at: nowIso }).eq('id', tData.order_id);
+          }
+        } else {
+          console.log('[OrderFetch] orders.id being queried:', orderId);
+          await activeClient.from('orders').update({
+            status: 'yolda',
+            picked_up_at: nowIso
+          }).eq('id', orderId);
+        }
       }
 
       await fetchAssistantOrders();
@@ -1936,37 +1967,48 @@ export function AsistanPage() {
 
   // Teslimat Kodu Doğrulama
   const handleVerifyDeliveryCode = async (order: any) => {
-    const enteredCode = (verificationCodes[order.id] || '').trim();
+    const targetId = order.id;
+    const enteredCode = (verificationCodes[targetId] || '').trim();
     const expectedCode = String(order.delivery_code || '').trim();
 
     if (!enteredCode || enteredCode.length !== 6) {
-      setVerificationErrors(prev => ({ ...prev, [order.id]: 'Teslim kodu 6 haneli olmalıdır.' }));
+      setVerificationErrors(prev => ({ ...prev, [targetId]: 'Teslim kodu 6 haneli olmalıdır.' }));
       return;
     }
 
     if (enteredCode !== expectedCode) {
-      setVerificationErrors(prev => ({ ...prev, [order.id]: 'Teslim kodu hatalı.' }));
+      setVerificationErrors(prev => ({ ...prev, [targetId]: 'Teslim kodu hatalı.' }));
       return;
     }
 
-    setVerifyingOrder(order.id);
-    setVerificationErrors(prev => ({ ...prev, [order.id]: '' }));
+    setVerifyingOrder(targetId);
+    setVerificationErrors(prev => ({ ...prev, [targetId]: '' }));
 
     try {
       const nowIso = new Date().toISOString();
-      if (isSupabaseConfigured) {
+      if (isSupabaseConfigured && isUUID(targetId)) {
         const activeClient = await getAuthenticatedClient();
-        await activeClient.from('orders').update({
-          delivery_code_verified: true,
-          delivery_code_verified_at: nowIso
-        }).eq('id', order.id);
+        const { data: tData } = await activeClient.from('tasks').select('id, order_id').eq('id', targetId).maybeSingle();
+        if (tData) {
+          await activeClient.from('tasks').update({ delivery_code_verified: true, delivery_code_verified_at: nowIso }).eq('id', targetId);
+          if (tData.order_id && isUUID(tData.order_id)) {
+            console.log('[OrderFetch] orders.id being queried:', tData.order_id);
+            await activeClient.from('orders').update({ delivery_code_verified: true, delivery_code_verified_at: nowIso }).eq('id', tData.order_id);
+          }
+        } else {
+          console.log('[OrderFetch] orders.id being queried:', targetId);
+          await activeClient.from('orders').update({
+            delivery_code_verified: true,
+            delivery_code_verified_at: nowIso
+          }).eq('id', targetId);
+        }
       }
 
-      setVerifiedOrderIds(prev => ({ ...prev, [order.id]: true }));
+      setVerifiedOrderIds(prev => ({ ...prev, [targetId]: true }));
       await fetchAssistantOrders();
     } catch (err: any) {
       console.error('Error verifying delivery code:', err);
-      setVerificationErrors(prev => ({ ...prev, [order.id]: 'Kod doğrulanırken hata oluştu.' }));
+      setVerificationErrors(prev => ({ ...prev, [targetId]: 'Kod doğrulanırken hata oluştu.' }));
     } finally {
       setVerifyingOrder(null);
     }
@@ -1974,16 +2016,26 @@ export function AsistanPage() {
 
   // 6. STATUS = "yolda" -> "Teslim Edildi"
   const handleCompleteOrder = async (orderId: string) => {
-    if (!currentAssistant) return;
+    if (!currentAssistant || !isUUID(orderId)) return;
     setActionLoading(orderId);
     try {
       const nowIso = new Date().toISOString();
       if (isSupabaseConfigured) {
         const activeClient = await getAuthenticatedClient();
-        await activeClient.from('orders').update({
-          status: 'teslim_edildi',
-          delivered_at: nowIso
-        }).eq('id', orderId);
+        const { data: tData } = await activeClient.from('tasks').select('id, order_id').eq('id', orderId).maybeSingle();
+        if (tData) {
+          await activeClient.from('tasks').update({ status: 'teslim_edildi', delivered_at: nowIso }).eq('id', orderId);
+          if (tData.order_id && isUUID(tData.order_id)) {
+            console.log('[OrderFetch] orders.id being queried:', tData.order_id);
+            await activeClient.from('orders').update({ status: 'teslim_edildi', delivered_at: nowIso }).eq('id', tData.order_id);
+          }
+        } else {
+          console.log('[OrderFetch] orders.id being queried:', orderId);
+          await activeClient.from('orders').update({
+            status: 'teslim_edildi',
+            delivered_at: nowIso
+          }).eq('id', orderId);
+        }
       }
 
       await fetchAssistantOrders();

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useRoute, useLocation } from 'wouter';
-import { supabase, getActiveSupabaseClient, isSupabaseConfigured, db, Order } from '@/lib/supabase';
+import { supabase, getActiveSupabaseClient, isSupabaseConfigured, db, Order, isUUID } from '@/lib/supabase';
 import { resolveTaskFields } from '@/pages/AsistanPage';
 import { useToast } from '@/hooks/use-toast';
 import {
@@ -88,12 +88,28 @@ export function TaskDetailPage() {
 
     try {
       const nowIso = new Date().toISOString();
-      if (isSupabaseConfigured) {
+      if (isSupabaseConfigured && isUUID(order.id)) {
         const client = await getActiveSupabaseClient();
-        await client.from('orders').update({
-          delivery_code_verified: true,
-          delivery_code_verified_at: nowIso,
-        }).eq('id', order.id);
+        const { data: tData } = await client.from('tasks').select('id, order_id').eq('id', order.id).maybeSingle();
+        if (tData) {
+          await client.from('tasks').update({
+            delivery_code_verified: true,
+            delivery_code_verified_at: nowIso,
+          }).eq('id', order.id);
+          if (tData.order_id && isUUID(tData.order_id)) {
+            console.log('[OrderFetch] orders.id being queried:', tData.order_id);
+            await client.from('orders').update({
+              delivery_code_verified: true,
+              delivery_code_verified_at: nowIso,
+            }).eq('id', tData.order_id);
+          }
+        } else {
+          console.log('[OrderFetch] orders.id being queried:', order.id);
+          await client.from('orders').update({
+            delivery_code_verified: true,
+            delivery_code_verified_at: nowIso,
+          }).eq('id', order.id);
+        }
       }
 
       setIsCodeVerified(true);
@@ -135,12 +151,22 @@ export function TaskDetailPage() {
     setActionLoading(true);
     try {
       const nowIso = new Date().toISOString();
-      if (isSupabaseConfigured) {
+      if (isSupabaseConfigured && isUUID(order.id)) {
         const client = await getActiveSupabaseClient();
-        await client.from('orders').update({
-          status: 'teslim_edildi',
-          delivered_at: nowIso
-        }).eq('id', order.id);
+        const { data: tData } = await client.from('tasks').select('id, order_id').eq('id', order.id).maybeSingle();
+        if (tData) {
+          await client.from('tasks').update({ status: 'teslim_edildi', delivered_at: nowIso }).eq('id', order.id);
+          if (tData.order_id && isUUID(tData.order_id)) {
+            console.log('[OrderFetch] orders.id being queried:', tData.order_id);
+            await client.from('orders').update({ status: 'teslim_edildi', delivered_at: nowIso }).eq('id', tData.order_id);
+          }
+        } else {
+          console.log('[OrderFetch] orders.id being queried:', order.id);
+          await client.from('orders').update({
+            status: 'teslim_edildi',
+            delivered_at: nowIso
+          }).eq('id', order.id);
+        }
       } else {
         await db.updateOrderStatus(order.id, 'teslim_edildi');
       }
@@ -170,18 +196,29 @@ export function TaskDetailPage() {
     setSubmittingCancel(true);
     try {
       const reasonText = cancelReason.trim() || 'Müşteriye ulaşılamadı';
-      if (isSupabaseConfigured) {
+      if (isSupabaseConfigured && isUUID(order.id)) {
         const client = await getActiveSupabaseClient();
-        const res1 = await client.from('orders').update({
-          status: 'cancelled',
-          cancel_reason: reasonText,
-        }).eq('id', order.id);
-
-        if (res1.error) {
-          await client.from('orders').update({
-            status: 'iptal',
+        const { data: tData } = await client.from('tasks').select('id, order_id').eq('id', order.id).maybeSingle();
+        if (tData) {
+          await client.from('tasks').update({ status: 'cancelled', cancel_reason: reasonText }).eq('id', order.id);
+          if (tData.order_id && isUUID(tData.order_id)) {
+            console.log('[OrderFetch] orders.id being queried:', tData.order_id);
+            await client.from('orders').update({ status: 'cancelled', cancel_reason: reasonText }).eq('id', tData.order_id);
+          }
+        } else {
+          console.log('[OrderFetch] orders.id being queried:', order.id);
+          const res1 = await client.from('orders').update({
+            status: 'cancelled',
             cancel_reason: reasonText,
           }).eq('id', order.id);
+
+          if (res1.error) {
+            console.log('[OrderFetch] orders.id being queried:', order.id);
+            await client.from('orders').update({
+              status: 'iptal',
+              cancel_reason: reasonText,
+            }).eq('id', order.id);
+          }
         }
       }
 

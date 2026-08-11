@@ -103,7 +103,7 @@ export function CustomerAccountModal({
 
         if (sanitizedPhone && sanitizedPhone.length >= 7) {
           if (colsSet.has('customer_phone') || colsSet.size === 0) {
-            orParts.push(`customer_phone.eq."${sanitizedPhone}"`);
+            orParts.push(`customer_phone.eq.${sanitizedPhone}`);
           }
         }
 

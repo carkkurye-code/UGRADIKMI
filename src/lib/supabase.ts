@@ -2938,6 +2938,7 @@ export const db = {
         const { data: taskData } = await client.from('tasks').select('*').eq('id', orderId).maybeSingle();
         if (taskData) {
           if (taskData.order_id && isUUID(taskData.order_id)) {
+            console.log('[OrderFetch] orders.id being queried:', taskData.order_id);
             const { data: orderData } = await client.from('orders').select('*').eq('id', taskData.order_id).maybeSingle();
             if (orderData) {
               return {
@@ -2961,6 +2962,7 @@ export const db = {
         }
 
         // 2. Fallback: Query orders table directly with orderId UUID
+        console.log('[OrderFetch] orders.id being queried:', orderId);
         const { data, error } = await client.from('orders').select('*').eq('id', orderId).maybeSingle();
 
         if (error) {
